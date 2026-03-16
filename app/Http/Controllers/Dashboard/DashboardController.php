@@ -16,22 +16,50 @@ use App\Models\MasterBackend\SettingUser\Unit;
 use App\Models\MasterBackend\UserProfil\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 
 class DashboardController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $startDate = request('start_date')
-            ? Carbon::parse(request('start_date'))
-            : Carbon::today();
+        $range = $request->input('range', 'today');
 
-        $endDate = request('end_date')
-            ? Carbon::parse(request('end_date'))
-            : Carbon::today();
+        switch ($range) {
+
+            case 'week':
+                $startDate = Carbon::now()->startOfWeek();
+                $endDate = Carbon::now()->endOfWeek();
+                break;
+
+            case 'month':
+                $startDate = Carbon::now()->startOfMonth();
+                $endDate = Carbon::now()->endOfMonth();
+                break;
+
+            case 'year':
+                $startDate = Carbon::now()->startOfYear();
+                $endDate = Carbon::now()->endOfYear();
+                break;
+
+            default:
+                $startDate = Carbon::today();
+                $endDate = Carbon::today();
+        }
+
+        if ($request->filled('start_date')) {
+            $startDate = Carbon::parse($request->start_date);
+        }
+
+        if ($request->filled('end_date')) {
+            $endDate = Carbon::parse($request->end_date);
+        }
 
         $today = Carbon::today();
         $tahun = date('Y');
         $user = auth()->user();
+
+
+
 
         /* ===================== HIRARKI USER ===================== */
 
@@ -273,8 +301,6 @@ class DashboardController extends Controller
         $planMargin = $planRevenue > 0 ? ($planEbitda / $planRevenue) * 100 : 0;
         $actualMargin = $actualRevenue > 0 ? ($actualEbitda / $actualRevenue) * 100 : 0;
 
-
-
         /* ===================== DASHBOARD UNIT ===================== */
 
         // $revenues = DB::table('patient_visits as pv')
@@ -298,6 +324,7 @@ class DashboardController extends Controller
             ->whereBetween('tanggal', [$startDate, $endDate])
             ->groupBy('unit_id')
             ->pluck('expense', 'unit_id');
+
 
         $positions = Position::with('unit')->get();
 

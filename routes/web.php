@@ -88,6 +88,8 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/report/finance-unit', [ReportController::class, 'financePerUnit'])->name('financePerUnit');
         Route::get('/finance-report/download', [ReportController::class, 'downloadFinanceReport'])
             ->name('finance.report.download');
+        Route::get('/exportExcel/download', [ReportController::class, 'exportExcel'])
+            ->name('exportExcel.download');
     });
 
     Route::prefix('visits')->group(function () {

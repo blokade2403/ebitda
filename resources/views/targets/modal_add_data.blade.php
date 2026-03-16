@@ -56,9 +56,10 @@
                  </div>
 
                  <h6 class="fs-16 my-3">Form Input Aktual Revenue</h6>
-                 <form method="POST" action="{{ route('visits.store') }}">
+                 <form method="POST" action="{{ route('targets.store') }}">
                      @csrf
-                     <input type="hidden" name="tanggal" class="form-control" required>
+                     <input type="hidden" name="tanggal" class="form-control" value="{{ now()->format('Y-m-d') }}"
+                         required>
                      <div class="col-lg-12 mb-3">
                          <label class="form-label">Pilih Kategori Revenue</label>
                          <select class="form-control" id="revenue_category_id">

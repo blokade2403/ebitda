@@ -6,6 +6,7 @@ use App\Exports\ExpenseCategoryExport;
 use App\Exports\FinanceHierarchyExport;
 use App\Exports\FinanceReportExport;
 use App\Exports\FinanceUnitExport;
+use App\Exports\ReportExport;
 use App\Exports\RevenueUnitExport;
 use App\Http\Controllers\Controller;
 use App\Models\Ebitda\Expense;
@@ -58,8 +59,6 @@ class ReportController extends Controller
     {
         $tahun = $request->tahun ?? date('Y');
 
-        $positions = Position::with('unit')->get();
-
         $namaBulan = [
             1 => 'Jan',
             2 => 'Feb',
@@ -79,70 +78,271 @@ class ReportController extends Controller
 
         $revenues = DB::table('patient_visits as pv')
             ->join('medical_services as ms', 'ms.id', '=', 'pv.service_id')
-            ->selectRaw('pv.unit_id, MONTH(pv.tanggal) as bulan,
-            SUM(pv.jumlah_pasien * ms.tarif) as revenue')
+            ->selectRaw('
+                pv.unit_id,
+                MONTH(pv.tanggal) as bulan,
+                SUM(pv.jumlah_pasien * ms.tarif) as revenue
+            ')
             ->whereYear('pv.tanggal', $tahun)
             ->groupBy('pv.unit_id', 'bulan')
-            ->get()
-            ->groupBy('unit_id');
+            ->get();
 
         /* ================= EXPENSE BULANAN ================= */
 
         $expenses = DB::table('expenses')
-            ->selectRaw('unit_id, MONTH(tanggal) as bulan,
-            SUM(jumlah) as expense')
+            ->selectRaw('
+                unit_id,
+                MONTH(tanggal) as bulan,
+                SUM(jumlah) as expense
+            ')
             ->whereYear('tanggal', $tahun)
             ->groupBy('unit_id', 'bulan')
-            ->get()
-            ->groupBy('unit_id');
+            ->get();
+
+        /* ================= MAP DATA ================= */
+
+        $revenueMap = [];
+
+        foreach ($revenues as $row) {
+            $revenueMap[$row->unit_id][$row->bulan] = $row->revenue;
+        }
+
+        $expenseMap = [];
+
+        foreach ($expenses as $row) {
+            $expenseMap[$row->unit_id][$row->bulan] = $row->expense;
+        }
+
+        /* ================= AMBIL POSITION ================= */
+
+        $positions = Position::with('unit')->get();
+
+        /* ================= BUILD TREE ================= */
+
+        $tree = $this->buildTree($positions);
 
         $data = [];
 
-        foreach ($positions as $pos) {
+        foreach ($tree as $node) {
 
-            /* ambil seluruh child position */
-            $childIds = $this->getAllChildren($positions, $pos->id);
-
-            $allIds = $childIds->push($pos->id);
-
-            /* ambil unit dari semua hirarki */
-            $unitIds = $positions
-                ->whereIn('id', $allIds)
-                ->pluck('unit_id')
-                ->filter()
-                ->unique();
-
-            for ($bulan = 1; $bulan <= 12; $bulan++) {
-
-                $rev = 0;
-                $exp = 0;
-
-                foreach ($unitIds as $unitId) {
-
-                    $rev += optional(
-                        $revenues->get($unitId)?->where('bulan', $bulan)->first()
-                    )->revenue ?? 0;
-
-                    $exp += optional(
-                        $expenses->get($unitId)?->where('bulan', $bulan)->first()
-                    )->expense ?? 0;
-                }
-
-                $data[] = [
-                    'position' => $pos->nama_jabatan,
-                    'unit' => $pos->unit->nama_unit ?? '-',
-                    'bulan' => $namaBulan[$bulan],
-                    'revenue' => $rev,
-                    'expense' => $exp,
-                    'ebitda' => $rev - $exp,
-                ];
-            }
+            $this->flattenTree($node, $data, $revenueMap, $expenseMap, $namaBulan);
         }
 
         return Excel::download(
             new FinanceHierarchyExport($data),
             'finance_hierarchy_monthly.xlsx'
         );
+    }
+
+
+    private function getFinanceData()
+    {
+        $tanggal = date('Y-m-d');
+
+        /* ================= TARGET REVENUE ================= */
+
+        $targetRevenue = DB::table('financial_targets')
+            ->where('category_type', 'revenue')
+            ->sum('amount');
+
+        $targetDaily = $targetRevenue / 365;
+
+        /* ================= TARGET EXPENSE ================= */
+
+        $targetCost = DB::table('financial_targets as ft')
+            ->join('expense_categories as ec', 'ec.id', '=', 'ft.category_id')
+            ->selectRaw('
+            SUM(CASE WHEN ec.kelompok="variable" THEN amount ELSE 0 END) as variable,
+            SUM(CASE WHEN ec.kelompok="fixed" THEN amount ELSE 0 END) as fixed,
+            SUM(CASE WHEN ec.kelompok="ioc" THEN amount ELSE 0 END) as ioc
+        ')
+            ->where('ft.category_type', 'expense')
+            ->first();
+
+        $targetTotalCost =
+            ($targetCost->variable ?? 0) +
+            ($targetCost->fixed ?? 0) +
+            ($targetCost->ioc ?? 0);
+
+        $targetEbitda = $targetRevenue - $targetTotalCost;
+
+        $targetMargin = $targetRevenue > 0
+            ? ($targetEbitda / $targetRevenue) * 100
+            : 0;
+
+        /* ================= PLAN REVENUE ================= */
+
+        $planRevenue = DB::table('patient_visits as pv')
+            ->join('medical_services as ms', 'ms.id', '=', 'pv.service_id')
+            ->selectRaw('SUM(pv.jumlah_pasien * ms.tarif) as total')
+            ->whereDate('pv.tanggal', $tanggal)
+            ->value('total');
+
+        /* ================= PLAN EXPENSE ================= */
+
+        $planCost = DB::table('expenses as e')
+            ->join('expense_categories as ec', 'ec.id', '=', 'e.expense_category_id')
+            ->selectRaw('
+            SUM(CASE WHEN ec.kelompok="variable" THEN jumlah ELSE 0 END) as variable,
+            SUM(CASE WHEN ec.kelompok="fixed" THEN jumlah ELSE 0 END) as fixed,
+            SUM(CASE WHEN ec.kelompok="ioc" THEN jumlah ELSE 0 END) as ioc
+        ')
+            ->whereDate('e.tanggal', $tanggal)
+            ->first();
+
+        $planTotalCost =
+            ($planCost->variable ?? 0) +
+            ($planCost->fixed ?? 0) +
+            ($planCost->ioc ?? 0);
+
+        $planEbitda = ($planRevenue ?? 0) - $planTotalCost;
+
+        $planMargin = ($planRevenue ?? 0) > 0
+            ? ($planEbitda / $planRevenue) * 100
+            : 0;
+
+        /* ================= ACTUAL ================= */
+
+        $actualRevenue = $planRevenue; // biasanya actual sama dengan transaksi visit
+
+        $actualVariable = $planCost->variable ?? 0;
+        $actualFixed = $planCost->fixed ?? 0;
+        $actualIoc = $planCost->ioc ?? 0;
+
+        $actualTotalCost = $actualVariable + $actualFixed + $actualIoc;
+
+        $actualEbitda = $actualRevenue - $actualTotalCost;
+
+        $actualMargin = $actualRevenue > 0
+            ? ($actualEbitda / $actualRevenue) * 100
+            : 0;
+
+        return [
+
+            'target' => [
+                'revenue' => $targetRevenue,
+                'daily' => $targetDaily,
+                'variable' => $targetCost->variable ?? 0,
+                'fixed' => $targetCost->fixed ?? 0,
+                'ioc' => $targetCost->ioc ?? 0,
+                'total_cost' => $targetTotalCost,
+                'ebitda' => $targetEbitda,
+                'margin' => $targetMargin
+            ],
+
+            'plan' => [
+                'revenue' => $planRevenue ?? 0,
+                'variable' => $planCost->variable ?? 0,
+                'fixed' => $planCost->fixed ?? 0,
+                'ioc' => $planCost->ioc ?? 0,
+                'total_cost' => $planTotalCost,
+                'ebitda' => $planEbitda,
+                'margin' => $planMargin
+            ],
+
+            'actual' => [
+                'revenue' => $actualRevenue,
+                'variable' => $actualVariable,
+                'fixed' => $actualFixed,
+                'ioc' => $actualIoc,
+                'total_cost' => $actualTotalCost,
+                'ebitda' => $actualEbitda,
+                'margin' => $actualMargin
+            ]
+
+        ];
+    }
+
+    public function exportExcel()
+    {
+
+        $data = $this->getFinanceData(); // fungsi yang sama dengan dashboard
+
+        return Excel::download(
+            new ReportExport($data),
+            'reportexport.xlsx'
+        );
+    }
+
+    /* ================= BUILD POSITION TREE ================= */
+
+    private function buildTree($positions, $parentId = null)
+    {
+        $branch = [];
+
+        foreach ($positions as $pos) {
+
+            if ($pos->parent_id == $parentId) {
+
+                $children = $this->buildTree($positions, $pos->id);
+
+                $pos->children = $children;
+
+                $branch[] = $pos;
+            }
+        }
+
+        return $branch;
+    }
+
+    /* ================= HITUNG FINANCE RECURSIVE ================= */
+
+    private function calculateFinance($node, $revenueMap, $expenseMap, $level = 0)
+    {
+        $rev = array_fill(1, 12, 0);
+        $exp = array_fill(1, 12, 0);
+
+        $unitId = $node->unit_id ?? null;
+
+        if ($unitId) {
+
+            for ($m = 1; $m <= 12; $m++) {
+
+                $rev[$m] += $revenueMap[$unitId][$m] ?? 0;
+                $exp[$m] += $expenseMap[$unitId][$m] ?? 0;
+            }
+        }
+
+        foreach ($node->children as $child) {
+
+            $childData = $this->calculateFinance($child, $revenueMap, $expenseMap, $level + 1);
+
+            for ($m = 1; $m <= 12; $m++) {
+
+                $rev[$m] += $childData['rev'][$m];
+                $exp[$m] += $childData['exp'][$m];
+            }
+        }
+
+        return [
+            'rev' => $rev,
+            'exp' => $exp
+        ];
+    }
+
+    private function flattenTree($node, &$rows, $revenueMap, $expenseMap, $namaBulan, $level = 0)
+    {
+        $finance = $this->calculateFinance($node, $revenueMap, $expenseMap);
+
+        for ($bulan = 1; $bulan <= 12; $bulan++) {
+
+            $rev = $finance['rev'][$bulan];
+            $exp = $finance['exp'][$bulan];
+
+            $rows[] = [
+                'Position' => str_repeat('   ', $level) . $node->nama_jabatan,
+                'Unit' => $node->unit->nama_unit ?? '-',
+                'Bulan' => $namaBulan[$bulan],
+                'Revenue' => $rev,
+                'Expense' => $exp,
+                'EBITDA' => $rev - $exp
+            ];
+        }
+
+        foreach ($node->children as $child) {
+
+            $this->flattenTree($child, $rows, $revenueMap, $expenseMap, $namaBulan, $level + 1);
+        }
     }
 
     public function financePerUnit(Request $request)

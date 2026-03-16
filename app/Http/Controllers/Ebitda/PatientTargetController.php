@@ -82,7 +82,6 @@ class PatientTargetController extends Controller
 
     public function store(Request $request)
     {
-
         $request->validate([
             'service_id' => 'required',
             'tanggal' => 'required|date',

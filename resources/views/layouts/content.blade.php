@@ -214,7 +214,7 @@
 
                 <!-- TITLE -->
                 <h5 class="card-title mb-0">
-                    All Transactions
+                    Dashbord Ebitda Rumah Sakit
                 </h5>
 
                 <!-- FILTER -->
@@ -260,6 +260,9 @@
                         </a>
                         <a href="{{ route('finance.report.download') }}" class="btn btn-success btn-sm">
                             Download Finance Report
+                        </a>
+                        <a href="{{ route('exportExcel.download') }}" class="btn btn-success btn-sm">
+                            <i class="ri-download-line"></i> Report
                         </a>
 
                     </div>
@@ -413,7 +416,7 @@
 
                     <!-- TITLE -->
                     <h5 class="card-title mb-0">
-                        All Transactions
+                        Hirarki Ebitda Rumah Sakit Daerah Cilining
                     </h5>
 
                     <!-- FILTER -->
@@ -422,16 +425,23 @@
 
                             <!-- QUICK FILTER -->
                             <div class="btn-group btn-group-sm">
-                                <a href="{{ route('dashboard', ['range' => 'today']) }}" class="btn btn-light">
+                                <a href="{{ route('dashboard', ['range' => 'today']) }}"
+                                    class="btn btn-light {{ request('range') == 'today' ? 'active' : '' }}">
                                     Today
                                 </a>
-                                <a href="{{ route('dashboard', ['range' => 'week']) }}" class="btn btn-light">
+
+                                <a href="{{ route('dashboard', ['range' => 'week']) }}"
+                                    class="btn btn-light {{ request('range') == 'week' ? 'active' : '' }}">
                                     Week
                                 </a>
-                                <a href="{{ route('dashboard', ['range' => 'month']) }}" class="btn btn-light">
+
+                                <a href="{{ route('dashboard', ['range' => 'month']) }}"
+                                    class="btn btn-light {{ request('range') == 'month' ? 'active' : '' }}">
                                     Month
                                 </a>
-                                <a href="{{ route('dashboard', ['range' => 'year']) }}" class="btn btn-light">
+
+                                <a href="{{ route('dashboard', ['range' => 'year']) }}"
+                                    class="btn btn-light {{ request('range') == 'year' ? 'active' : '' }}">
                                     Year
                                 </a>
                             </div>
